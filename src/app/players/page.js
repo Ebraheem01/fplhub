@@ -370,96 +370,103 @@ export default function Players() {
                                     <div
                                         key={player.id}
                                         onClick={() => setSelectedPlayer(player)}
-                                        className="flex items-center justify-between p-4 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg transition-colors cursor-pointer group"
+                                        className="bg-gray-50 dark:bg-gray-700/50 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors cursor-pointer group p-4"
                                     >
-                                        <div className="flex items-center space-x-4">
-                                            <div className="flex items-center justify-center w-8 h-8 bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-full text-sm font-medium">
-                                                {startIndex + index + 1}
-                                            </div>
+                                        {/* Mobile and Desktop Layout */}
+                                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
 
-                                            {/* Player Image */}
-                                            <div className="w-12 h-12 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-600 flex items-center justify-center">
-                                                <img
-                                                    src={`https://resources.premierleague.com/premierleague/photos/players/250x250/p${player.code}.png`}
-                                                    alt={player.web_name}
-                                                    className="w-full h-full object-cover"
-                                                    onError={(e) => {
-                                                        e.target.style.display = 'none';
-                                                        e.target.nextSibling.style.display = 'flex';
-                                                    }}
-                                                />
-                                                <div className="w-full h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-bold text-sm" style={{ display: 'none' }}>
-                                                    {player.web_name.substring(0, 2)}
+                                            {/* Player Info Section */}
+                                            <div className="flex items-center space-x-4 min-w-0 flex-1">
+                                                <div className="flex items-center justify-center w-8 h-8 bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300 rounded-full text-sm font-medium flex-shrink-0">
+                                                    {startIndex + index + 1}
                                                 </div>
-                                            </div>
 
-                                            <div>
-                                                <div className="font-medium text-gray-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
-                                                    {player.web_name}
+                                                {/* Player Image */}
+                                                <div className="w-12 h-12 rounded-full overflow-hidden bg-gray-200 dark:bg-gray-600 flex items-center justify-center flex-shrink-0">
+                                                    <img
+                                                        src={`https://resources.premierleague.com/premierleague/photos/players/250x250/p${player.code}.png`}
+                                                        alt={player.web_name}
+                                                        className="w-full h-full object-cover"
+                                                        onError={(e) => {
+                                                            e.target.style.display = 'none';
+                                                            e.target.nextSibling.style.display = 'flex';
+                                                        }}
+                                                    />
+                                                    <div className="w-full h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full flex items-center justify-center text-white font-bold text-sm" style={{ display: 'none' }}>
+                                                        {player.web_name.substring(0, 2)}
+                                                    </div>
                                                 </div>
-                                                <div className="flex items-center space-x-3 text-sm text-gray-600 dark:text-gray-400">
-                                                    <span>{team?.short_name}</span>
-                                                    <span>{formatPosition(player.element_type)}</span>
-                                                    <span className={`px-2 py-1 rounded-full text-xs ${status.available
-                                                        ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
-                                                        : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
-                                                        }`}>
-                                                        {status.text}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </div>
 
-                                        <div className="flex items-center space-x-6 text-sm">
-                                            <div className="text-center">
-                                                <div className="font-bold text-gray-900 dark:text-white">
-                                                    {player.total_points}
-                                                </div>
-                                                <div className="text-gray-600 dark:text-gray-400">
-                                                    Points
+                                                <div className="min-w-0 flex-1">
+                                                    <div className="font-medium text-gray-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors truncate">
+                                                        {player.web_name}
+                                                    </div>
+                                                    <div className="flex items-center space-x-2 text-sm text-gray-600 dark:text-gray-400 mt-1 flex-wrap">
+                                                        <span className="truncate">{team?.short_name}</span>
+                                                        <span>•</span>
+                                                        <span>{formatPosition(player.element_type)}</span>
+                                                        <span className={`px-2 py-1 rounded-full text-xs flex-shrink-0 ${status.available
+                                                            ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+                                                            : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
+                                                            }`}>
+                                                            {status.text}
+                                                        </span>
+                                                    </div>
                                                 </div>
                                             </div>
 
-                                            <div className="text-center">
-                                                <div className="font-bold text-gray-900 dark:text-white">
-                                                    {player.form}
-                                                </div>
-                                                <div className="text-gray-600 dark:text-gray-400">
-                                                    Form
-                                                </div>
-                                            </div>
-
-                                            <div className="text-center">
-                                                <div className="font-bold text-gray-900 dark:text-white">
-                                                    {player.selected_by_percent}%
-                                                </div>
-                                                <div className="text-gray-600 dark:text-gray-400">
-                                                    Owned
-                                                </div>
-                                            </div>
-
-                                            <div className="text-center">
-                                                <div className="font-bold text-gray-900 dark:text-white">
-                                                    £{formatPrice(player.now_cost)}
-                                                </div>
-                                                <div className="text-gray-600 dark:text-gray-400">
-                                                    Price
-                                                </div>
-                                            </div>
-
-                                            {nextOpponent && (
+                                            {/* Stats Section - Grid on mobile, flex on desktop */}
+                                            <div className="grid grid-cols-2 sm:flex sm:items-center gap-4 sm:gap-6 text-sm flex-shrink-0">
                                                 <div className="text-center">
-                                                    <div className={`w-6 h-6 rounded mx-auto flex items-center justify-center text-xs font-bold text-white ${nextOpponent.difficulty <= 2 ? 'bg-green-500' :
-                                                        nextOpponent.difficulty <= 3 ? 'bg-yellow-500' :
-                                                            nextOpponent.difficulty <= 4 ? 'bg-orange-500' : 'bg-red-500'
-                                                        }`}>
-                                                        {nextOpponent.difficulty}
+                                                    <div className="font-bold text-gray-900 dark:text-white">
+                                                        {player.total_points}
                                                     </div>
-                                                    <div className="text-gray-600 dark:text-gray-400 text-xs mt-1">
-                                                        {nextOpponent.isHome ? 'vs' : '@'} {nextOpponent.opponent}
+                                                    <div className="text-gray-600 dark:text-gray-400 text-xs">
+                                                        Points
                                                     </div>
                                                 </div>
-                                            )}
+
+                                                <div className="text-center">
+                                                    <div className="font-bold text-gray-900 dark:text-white">
+                                                        {player.form}
+                                                    </div>
+                                                    <div className="text-gray-600 dark:text-gray-400 text-xs">
+                                                        Form
+                                                    </div>
+                                                </div>
+
+                                                <div className="text-center">
+                                                    <div className="font-bold text-gray-900 dark:text-white">
+                                                        {player.selected_by_percent}%
+                                                    </div>
+                                                    <div className="text-gray-600 dark:text-gray-400 text-xs">
+                                                        Owned
+                                                    </div>
+                                                </div>
+
+                                                <div className="text-center">
+                                                    <div className="font-bold text-gray-900 dark:text-white">
+                                                        £{formatPrice(player.now_cost)}
+                                                    </div>
+                                                    <div className="text-gray-600 dark:text-gray-400 text-xs">
+                                                        Price
+                                                    </div>
+                                                </div>
+
+                                                {nextOpponent && (
+                                                    <div className="text-center col-span-2 sm:col-span-1">
+                                                        <div className={`w-6 h-6 rounded mx-auto flex items-center justify-center text-xs font-bold text-white ${nextOpponent.difficulty <= 2 ? 'bg-green-500' :
+                                                            nextOpponent.difficulty <= 3 ? 'bg-yellow-500' :
+                                                                nextOpponent.difficulty <= 4 ? 'bg-orange-500' : 'bg-red-500'
+                                                            }`}>
+                                                            {nextOpponent.difficulty}
+                                                        </div>
+                                                        <div className="text-gray-600 dark:text-gray-400 text-xs mt-1">
+                                                            {nextOpponent.isHome ? 'vs' : '@'} {nextOpponent.opponent}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                 );
@@ -468,19 +475,19 @@ export default function Players() {
 
                         {/* Pagination */}
                         {totalPages > 1 && (
-                            <div className="mt-6 flex items-center justify-between">
-                                <div className="text-sm text-gray-600 dark:text-gray-400">
+                            <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                                <div className="text-sm text-gray-600 dark:text-gray-400 text-center sm:text-left">
                                     Showing {startIndex + 1} to {Math.min(endIndex, filteredAndSortedPlayers.length)} of {filteredAndSortedPlayers.length} players
                                 </div>
 
-                                <div className="flex items-center space-x-2">
+                                <div className="flex items-center justify-center space-x-2">
                                     <button
                                         onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                                         disabled={currentPage === 1}
                                         className="flex items-center gap-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                     >
                                         <ChevronLeft className="w-4 h-4" />
-                                        Previous
+                                        <span className="hidden xs:inline">Previous</span>
                                     </button>
 
                                     <div className="flex items-center space-x-1">
@@ -516,7 +523,7 @@ export default function Players() {
                                         disabled={currentPage === totalPages}
                                         className="flex items-center gap-1 px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                     >
-                                        Next
+                                        <span className="hidden xs:inline">Next</span>
                                         <ChevronRight className="w-4 h-4" />
                                     </button>
                                 </div>
@@ -627,8 +634,8 @@ function PlayerProfile({ player, onBack, fplData, fixtures, getNextOpponent }) {
                                     </div>
                                     <div className="flex items-center gap-4 mt-3">
                                         <span className={`px-3 py-1 rounded-full text-sm ${status.available
-                                                ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
-                                                : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
+                                            ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300'
+                                            : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'
                                             }`}>
                                             {status.text}
                                         </span>
@@ -779,8 +786,8 @@ function PlayerProfile({ player, onBack, fplData, fixtures, getNextOpponent }) {
                                 </div>
                             </div>
                             <div className="text-xs text-gray-500 dark:text-gray-500 bg-gray-50 dark:bg-gray-700 p-3 rounded">
-                                <strong>Influence:</strong> Measures the degree to which a player has the ability to alter the outcome of a match<br/>
-                                <strong>Creativity:</strong> Assesses player performance in terms of producing goal scoring opportunities for others<br/>
+                                <strong>Influence:</strong> Measures the degree to which a player has the ability to alter the outcome of a match<br />
+                                <strong>Creativity:</strong> Assesses player performance in terms of producing goal scoring opportunities for others<br />
                                 <strong>Threat:</strong> Gauges players who are most likely to score goals
                             </div>
                         </div>
