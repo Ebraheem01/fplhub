@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import Layout from '@/components/Layout';
 import { useFPLData } from '@/hooks/useFPLData';
 import { useFixtures } from '@/hooks/useFixtures';
@@ -70,6 +70,7 @@ export default function TeamPlanner() {
     const [captain, setCaptain] = useState(null);
     const [viceCaptain, setViceCaptain] = useState(null);
     const [activeChip, setActiveChip] = useState(null);
+    const [showAnalysis, setShowAnalysis] = useState(false);
 
     const { data: fplData, loading, error } = useFPLData();
     const { fixtures } = useFixtures();
@@ -221,8 +222,10 @@ export default function TeamPlanner() {
             benchPlayers: benchPlayers.length,
             expectedPoints: expectedPoints.toFixed(1)
         };
-    }, [team, fplData, selectedFormation, captain, activeChip]);    // Get next opponent for a player
-    const getNextOpponent = (playerId) => {
+    }, [team, fplData, selectedFormation, captain, activeChip]);
+
+    // Get next opponent for a player
+    const getNextOpponent = useCallback((playerId) => {
         if (!fplData || !fixtures.length) return null;
 
         const player = fplData.elements.find(p => p.id === playerId);
@@ -246,7 +249,296 @@ export default function TeamPlanner() {
             difficulty,
             kickoff: upcomingFixture.kickoff_time
         };
-    };
+    }, [fplData, fixtures]);
+
+    // Smart Team Analysis Algorithm
+    const teamAnalysis = useMemo(() => {
+        if (!fplData || !fixtures.length) return null;
+
+        const allSelectedPlayers = [
+            team.goalkeeper,
+            ...team.defenders.filter(Boolean),
+            ...team.midfielders.filter(Boolean),
+            ...team.forwards.filter(Boolean),
+            team.bench.goalkeeper,
+            ...team.bench.outfield.filter(Boolean)
+        ].filter(Boolean);
+
+        if (allSelectedPlayers.length === 0) return null;
+
+        const currentPlayers = allSelectedPlayers.map(id =>
+            fplData.elements.find(p => p.id === id)
+        ).filter(Boolean);
+
+        // Calculate current budget for transfer suggestions
+        const totalCost = allSelectedPlayers.reduce((sum, playerId) => {
+            const player = fplData.elements.find(p => p.id === playerId);
+            return sum + (player ? player.now_cost : 0);
+        }, 0);
+        const currentBudget = 1000 - totalCost; // Budget available for transfers        // Calculate various metrics for team analysis
+        const calculatePlayerScore = (player, isStarter = true) => {
+            const nextOpponent = getNextOpponent(player.id);
+            const epNext = parseFloat(player.ep_next) || 0;
+            const form = parseFloat(player.form) || 0;
+            const ppg = parseFloat(player.points_per_game) || 0;
+            const ppm = calculatePPM(player.total_points, player.now_cost);
+            const ownership = parseFloat(player.selected_by_percent) || 0;
+            const fdr = nextOpponent?.difficulty || 3;
+
+            // Availability check
+            const status = getPlayerStatus(player.status, player.chance_of_playing_next_round);
+            const availabilityScore = status.available ? 1 : 0.3;
+
+            // Form momentum (last 5 games vs season average)
+            const formVsPpg = form > ppg ? 1.2 : form < ppg * 0.8 ? 0.8 : 1;
+
+            // Fixture difficulty (inverted - lower FDR is better)
+            const fixtureScore = (6 - fdr) / 5;
+
+            // Value score (points per million)
+            const valueScore = Math.min(parseFloat(ppm) / 10, 1); // Cap at 1
+
+            // Ownership consideration (differential bonus for low ownership good players)
+            const ownershipScore = ownership < 5 && epNext > 5 ? 1.2 :
+                ownership > 50 ? 0.9 : 1;
+
+            // Base score calculation
+            let score = (epNext * 0.3 + form * 0.2 + ppg * 0.2 + valueScore * 0.15) *
+                fixtureScore * formVsPpg * ownershipScore * availabilityScore;
+
+            // Bonus for starters
+            if (isStarter) score *= 1.1;
+
+            return {
+                player: player,
+                score: score,
+                epNext,
+                form,
+                ppg,
+                ppm: parseFloat(ppm),
+                ownership,
+                fdr,
+                available: status.available,
+                nextOpponent
+            };
+        };
+
+        // Analyze starting XI
+        const startingPlayers = [
+            team.goalkeeper,
+            ...team.defenders.filter(Boolean),
+            ...team.midfielders.filter(Boolean),
+            ...team.forwards.filter(Boolean)
+        ].filter(Boolean).map(id =>
+            fplData.elements.find(p => p.id === id)
+        ).filter(Boolean);
+
+        const benchPlayers = [
+            team.bench.goalkeeper,
+            ...team.bench.outfield.filter(Boolean)
+        ].filter(Boolean).map(id =>
+            fplData.elements.find(p => p.id === id)
+        ).filter(Boolean);
+
+        const startingScores = startingPlayers.map(p => calculatePlayerScore(p, true));
+        const benchScores = benchPlayers.map(p => calculatePlayerScore(p, false));
+
+        // Calculate team rating (0-100)
+        const avgStartingScore = startingScores.reduce((sum, s) => sum + s.score, 0) / startingScores.length;
+        const avgBenchScore = benchScores.reduce((sum, s) => sum + s.score, 0) / benchScores.length;
+
+        // Weight starting XI more heavily (80%) vs bench (20%)
+        const overallScore = (avgStartingScore * 0.8) + (avgBenchScore * 0.2);
+        const teamRating = Math.min(Math.round(overallScore * 10), 100); // Scale to 0-100
+
+        // Identify transfer targets
+        const getTransferSuggestions = () => {
+            const suggestions = [];
+
+            // Find worst performers in starting XI
+            const weakestStarters = startingScores
+                .filter(s => s.score < avgStartingScore * 0.8) // 20% below average
+                .sort((a, b) => a.score - b.score)
+                .slice(0, 3);
+
+            // For each weak starter, find better alternatives
+            weakestStarters.forEach(weak => {
+                const position = weak.player.element_type;
+                // Max price = current budget + player's selling price
+                const maxPrice = weak.player.now_cost + currentBudget;
+
+                const alternatives = fplData.elements
+                    .filter(p =>
+                        p.element_type === position &&
+                        p.now_cost <= maxPrice &&
+                        !allSelectedPlayers.includes(p.id) &&
+                        getPlayerStatus(p.status, p.chance_of_playing_next_round).available
+                    )
+                    .map(p => calculatePlayerScore(p, true))
+                    .filter(alt => alt.score > weak.score * 1.2) // At least 20% better
+                    .sort((a, b) => b.score - a.score)
+                    .slice(0, 3);
+
+                if (alternatives.length > 0) {
+                    const transferCost = alternatives[0].player.now_cost - weak.player.now_cost;
+                    const isAffordable = transferCost <= currentBudget;
+
+                    suggestions.push({
+                        type: 'transfer',
+                        priority: isAffordable ? 'high' : 'budget-limited',
+                        playerOut: weak.player,
+                        playerIn: alternatives[0].player,
+                        reason: `Low performance score (${weak.score.toFixed(1)}) - ${isAffordable ? 'upgrade available' : 'upgrade needs budget'}`,
+                        improvement: ((alternatives[0].score - weak.score) / weak.score * 100).toFixed(1),
+                        transferCost: transferCost,
+                        isAffordable: isAffordable,
+                        budgetNeeded: isAffordable ? 0 : transferCost - currentBudget,
+                        alternatives: alternatives.slice(1, 3).map(a => a.player)
+                    });
+                }
+            });
+
+            // Check for injured/unavailable players
+            startingScores.forEach(playerScore => {
+                if (!playerScore.available) {
+                    const position = playerScore.player.element_type;
+                    const maxPrice = playerScore.player.now_cost + currentBudget;
+
+                    const alternatives = fplData.elements
+                        .filter(p =>
+                            p.element_type === position &&
+                            p.now_cost <= maxPrice &&
+                            !allSelectedPlayers.includes(p.id) &&
+                            getPlayerStatus(p.status, p.chance_of_playing_next_round).available
+                        )
+                        .map(p => calculatePlayerScore(p, true))
+                        .sort((a, b) => b.score - a.score)
+                        .slice(0, 3);
+
+                    if (alternatives.length > 0) {
+                        const transferCost = alternatives[0].player.now_cost - playerScore.player.now_cost;
+                        const isAffordable = transferCost <= currentBudget;
+
+                        suggestions.push({
+                            type: 'injury',
+                            priority: 'urgent',
+                            playerOut: playerScore.player,
+                            playerIn: alternatives[0].player,
+                            reason: isAffordable ? 'Player unavailable/injured' : 'Player unavailable - budget upgrade needed',
+                            transferCost: transferCost,
+                            isAffordable: isAffordable,
+                            budgetNeeded: isAffordable ? 0 : transferCost - currentBudget,
+                            alternatives: alternatives.slice(1, 3).map(a => a.player)
+                        });
+                    }
+                }
+            });
+
+            // If budget allows, look for value upgrades (good players significantly underpriced)
+            if (currentBudget >= 5) { // At least £0.5m available
+                const valueUpgrades = startingScores
+                    .filter(s => s.score < avgStartingScore && s.score > avgStartingScore * 0.6) // Middle performers
+                    .map(playerScore => {
+                        const position = playerScore.player.element_type;
+                        const maxPrice = playerScore.player.now_cost + currentBudget;
+
+                        const alternatives = fplData.elements
+                            .filter(p =>
+                                p.element_type === position &&
+                                p.now_cost <= maxPrice &&
+                                p.now_cost > playerScore.player.now_cost && // Must be an upgrade
+                                !allSelectedPlayers.includes(p.id) &&
+                                getPlayerStatus(p.status, p.chance_of_playing_next_round).available
+                            )
+                            .map(p => calculatePlayerScore(p, true))
+                            .filter(alt => alt.score > playerScore.score * 1.3) // Significant improvement
+                            .sort((a, b) => b.score - a.score)
+                            .slice(0, 2);
+
+                        if (alternatives.length > 0) {
+                            const transferCost = alternatives[0].player.now_cost - playerScore.player.now_cost;
+                            return {
+                                type: 'value',
+                                priority: 'medium',
+                                playerOut: playerScore.player,
+                                playerIn: alternatives[0].player,
+                                reason: `Value upgrade available with ${currentBudget >= 10 ? 'good' : 'limited'} budget`,
+                                improvement: ((alternatives[0].score - playerScore.score) / playerScore.score * 100).toFixed(1),
+                                transferCost: transferCost,
+                                isAffordable: true,
+                                budgetNeeded: 0,
+                                alternatives: alternatives.slice(1, 2).map(a => a.player)
+                            };
+                        }
+                        return null;
+                    })
+                    .filter(Boolean)
+                    .slice(0, 2); // Max 2 value upgrades
+
+                suggestions.push(...valueUpgrades);
+            }
+
+            return suggestions.slice(0, 5); // Top 5 suggestions
+        };        // Captain suggestions
+        const getCaptainSuggestions = () => {
+            return startingScores
+                .filter(s => s.player.element_type !== 1) // Exclude goalkeepers
+                .sort((a, b) => {
+                    // Weight EP more heavily for captaincy
+                    const scoreA = (a.epNext * 1.5) + (a.form * 0.5) + ((6 - a.fdr) / 5 * 2);
+                    const scoreB = (b.epNext * 1.5) + (b.form * 0.5) + ((6 - b.fdr) / 5 * 2);
+                    return scoreB - scoreA;
+                })
+                .slice(0, 3)
+                .map(s => ({
+                    player: s.player,
+                    reason: `${s.epNext} EP, ${s.form} form, FDR ${s.fdr} vs ${s.nextOpponent?.opponent}`,
+                    confidence: s.epNext > 6 ? 'High' : s.epNext > 4 ? 'Medium' : 'Low'
+                }));
+        };
+
+        // Bench optimization suggestions
+        const getBenchSuggestions = () => {
+            const suggestions = [];
+
+            // Check if any bench players are better than starters
+            benchScores.forEach(benchPlayer => {
+                const position = benchPlayer.player.element_type;
+                const positionStarters = startingScores.filter(s => s.player.element_type === position);
+                const weakestStarter = positionStarters.sort((a, b) => a.score - b.score)[0];
+
+                if (weakestStarter && benchPlayer.score > weakestStarter.score * 1.1) {
+                    suggestions.push({
+                        type: 'lineup',
+                        action: 'Consider starting',
+                        player: benchPlayer.player,
+                        instead: weakestStarter.player,
+                        reason: `Bench player outperforming starter (${benchPlayer.score.toFixed(1)} vs ${weakestStarter.score.toFixed(1)})`
+                    });
+                }
+            });
+
+            return suggestions;
+        };
+
+        return {
+            teamRating,
+            overallScore,
+            startingScores,
+            benchScores,
+            transferSuggestions: getTransferSuggestions(),
+            captainSuggestions: getCaptainSuggestions(),
+            benchSuggestions: getBenchSuggestions(),
+            currentBudget: currentBudget,
+            metrics: {
+                avgEP: startingScores.reduce((sum, s) => sum + s.epNext, 0) / startingScores.length,
+                avgForm: startingScores.reduce((sum, s) => sum + s.form, 0) / startingScores.length,
+                avgFDR: startingScores.reduce((sum, s) => sum + s.fdr, 0) / startingScores.length,
+                totalValue: startingScores.reduce((sum, s) => sum + s.ppm, 0),
+                unavailablePlayers: startingScores.filter(s => !s.available).length
+            }
+        };
+    }, [team, fplData, fixtures, getNextOpponent]);
 
     // Filter and sort players for current position
     const availablePlayers = useMemo(() => {
@@ -1065,8 +1357,8 @@ export default function TeamPlanner() {
                                     key={chipKey}
                                     onClick={() => activateChip(chipKey)}
                                     className={`p-3 rounded-lg border-2 transition-all text-left ${activeChip === chipKey
-                                            ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/30'
-                                            : 'border-gray-200 dark:border-gray-700 hover:border-purple-300'
+                                        ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/30'
+                                        : 'border-gray-200 dark:border-gray-700 hover:border-purple-300'
                                         }`}
                                 >
                                     <div className="flex items-center gap-2 mb-1">
@@ -1113,6 +1405,256 @@ export default function TeamPlanner() {
                         </button>
                     </div>
                 </div>
+
+                {/* Smart Analysis Section */}
+                {teamAnalysis && (
+                    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-xl font-semibold text-gray-900 dark:text-white">
+                                🧠 Smart Team Analysis
+                            </h3>
+                            <button
+                                onClick={() => setShowAnalysis(!showAnalysis)}
+                                className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition-colors"
+                            >
+                                <Activity className="w-4 h-4" />
+                                {showAnalysis ? 'Hide Analysis' : 'Show Analysis'}
+                            </button>
+                        </div>
+
+                        {/* Team Rating */}
+                        <div className="mb-6">
+                            <div className="flex items-center justify-between mb-3">
+                                <span className="text-lg font-medium text-gray-900 dark:text-white">Team Rating</span>
+                                <div className="flex items-center gap-2">
+                                    <span className={`text-3xl font-bold ${teamAnalysis.teamRating >= 80 ? 'text-green-600' :
+                                        teamAnalysis.teamRating >= 60 ? 'text-yellow-600' :
+                                            teamAnalysis.teamRating >= 40 ? 'text-orange-600' : 'text-red-600'
+                                        }`}>
+                                        {teamAnalysis.teamRating}%
+                                    </span>
+                                    <div className={`w-3 h-3 rounded-full ${teamAnalysis.teamRating >= 80 ? 'bg-green-500' :
+                                        teamAnalysis.teamRating >= 60 ? 'bg-yellow-500' :
+                                            teamAnalysis.teamRating >= 40 ? 'bg-orange-500' : 'bg-red-500'
+                                        }`}></div>
+                                </div>
+                            </div>
+
+                            {/* Rating Bar */}
+                            <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+                                <div
+                                    className={`h-3 rounded-full transition-all duration-500 ${teamAnalysis.teamRating >= 80 ? 'bg-green-500' :
+                                        teamAnalysis.teamRating >= 60 ? 'bg-yellow-500' :
+                                            teamAnalysis.teamRating >= 40 ? 'bg-orange-500' : 'bg-red-500'
+                                        }`}
+                                    style={{ width: `${teamAnalysis.teamRating}%` }}
+                                ></div>
+                            </div>
+
+                            <div className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+                                {teamAnalysis.teamRating >= 80 ? 'Excellent team composition!' :
+                                    teamAnalysis.teamRating >= 60 ? 'Good team with room for improvement' :
+                                        teamAnalysis.teamRating >= 40 ? 'Average team - consider upgrades' :
+                                            'Team needs significant improvements'}
+                            </div>
+                        </div>
+
+                        {/* Quick Metrics */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                            <div className="text-center p-3 bg-blue-50 dark:bg-blue-900/30 rounded-lg">
+                                <div className="text-lg font-bold text-blue-600">
+                                    {teamAnalysis.metrics.avgEP.toFixed(1)}
+                                </div>
+                                <div className="text-xs text-gray-600 dark:text-gray-400">Avg EP Next</div>
+                            </div>
+                            <div className="text-center p-3 bg-green-50 dark:bg-green-900/30 rounded-lg">
+                                <div className="text-lg font-bold text-green-600">
+                                    {teamAnalysis.metrics.avgForm.toFixed(1)}
+                                </div>
+                                <div className="text-xs text-gray-600 dark:text-gray-400">Avg Form</div>
+                            </div>
+                            <div className="text-center p-3 bg-yellow-50 dark:bg-yellow-900/30 rounded-lg">
+                                <div className="text-lg font-bold text-yellow-600">
+                                    {teamAnalysis.metrics.avgFDR.toFixed(1)}
+                                </div>
+                                <div className="text-xs text-gray-600 dark:text-gray-400">Avg FDR</div>
+                            </div>
+                            <div className="text-center p-3 bg-purple-50 dark:bg-purple-900/30 rounded-lg">
+                                <div className="text-lg font-bold text-purple-600">
+                                    {teamAnalysis.metrics.totalValue.toFixed(1)}
+                                </div>
+                                <div className="text-xs text-gray-600 dark:text-gray-400">Total PPM</div>
+                            </div>
+                        </div>
+
+                        {showAnalysis && (
+                            <div className="space-y-6">
+                                {/* Transfer Suggestions */}
+                                {teamAnalysis.transferSuggestions.length > 0 && (
+                                    <div>
+                                        <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                                            <TrendingUp className="w-5 h-5 text-blue-500" />
+                                            Transfer Suggestions
+                                        </h4>
+                                        <div className="space-y-3">
+                                            {teamAnalysis.transferSuggestions.map((suggestion, index) => (
+                                                <div key={index} className={`p-4 rounded-lg border ${suggestion.priority === 'urgent' ? 'border-red-200 bg-red-50 dark:bg-red-900/20' :
+                                                        suggestion.priority === 'budget-limited' ? 'border-orange-200 bg-orange-50 dark:bg-orange-900/20' :
+                                                            suggestion.priority === 'high' ? 'border-yellow-200 bg-yellow-50 dark:bg-yellow-900/20' :
+                                                                'border-blue-200 bg-blue-50 dark:bg-blue-900/20'
+                                                    }`}>
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className={`px-2 py-1 rounded text-xs font-bold ${suggestion.priority === 'urgent' ? 'bg-red-500 text-white' :
+                                                                    suggestion.priority === 'budget-limited' ? 'bg-orange-500 text-white' :
+                                                                        suggestion.priority === 'high' ? 'bg-yellow-500 text-white' :
+                                                                            'bg-blue-500 text-white'
+                                                                }`}>
+                                                                {suggestion.priority === 'budget-limited' ? 'BUDGET LIMITED' : suggestion.priority.toUpperCase()}
+                                                            </span>
+                                                            <span className="font-medium text-gray-900 dark:text-white">
+                                                                {suggestion.playerOut.web_name} → {suggestion.playerIn.web_name}
+                                                            </span>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            {suggestion.improvement && (
+                                                                <span className="text-green-600 font-medium text-sm block">
+                                                                    +{suggestion.improvement}% improvement
+                                                                </span>
+                                                            )}
+                                                            {!suggestion.isAffordable && (
+                                                                <span className="text-red-600 font-medium text-xs">
+                                                                    Need £{formatPrice(suggestion.budgetNeeded)}m more
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                                                        {suggestion.reason}
+                                                    </p>
+                                                    <div className="flex items-center gap-4 text-xs flex-wrap">
+                                                        <span className="text-gray-500">Out: £{formatPrice(suggestion.playerOut.now_cost)}m</span>
+                                                        <span className="text-gray-500">In: £{formatPrice(suggestion.playerIn.now_cost)}m</span>
+                                                        <span className={`font-medium px-2 py-1 rounded ${suggestion.transferCost > 0 ? 'text-red-700 bg-red-100 dark:bg-red-900/30' :
+                                                                suggestion.transferCost < 0 ? 'text-green-700 bg-green-100 dark:bg-green-900/30' :
+                                                                    'text-gray-700 bg-gray-100 dark:bg-gray-700'
+                                                            }`}>
+                                                            {suggestion.transferCost > 0 ? '+' : ''}£{formatPrice(suggestion.transferCost)}m cost
+                                                        </span>
+                                                        {suggestion.isAffordable ? (
+                                                            <span className="text-green-600 font-medium bg-green-100 dark:bg-green-900/30 px-2 py-1 rounded">
+                                                                ✓ Affordable
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-red-600 font-medium bg-red-100 dark:bg-red-900/30 px-2 py-1 rounded">
+                                                                ⚠ Over Budget
+                                                            </span>
+                                                        )}
+                                                        <span className="text-purple-600 font-medium">
+                                                            Budget: £{formatPrice(teamAnalysis.currentBudget)}m
+                                                        </span>
+                                                    </div>
+                                                    {suggestion.alternatives && suggestion.alternatives.length > 0 && (
+                                                        <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+                                                            <span className="text-xs text-gray-500">Alternatives: </span>
+                                                            <span className="text-xs text-gray-600 dark:text-gray-400">
+                                                                {suggestion.alternatives.map(alt => alt.web_name).join(', ')}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Captain Suggestions */}
+                                {teamAnalysis.captainSuggestions.length > 0 && (
+                                    <div>
+                                        <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                                            <Star className="w-5 h-5 text-yellow-500" />
+                                            Captain Recommendations
+                                        </h4>
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                            {teamAnalysis.captainSuggestions.map((suggestion, index) => (
+                                                <div key={index} className="p-4 bg-gradient-to-r from-yellow-50 to-yellow-100 dark:from-yellow-900/20 dark:to-yellow-800/20 rounded-lg border border-yellow-200 dark:border-yellow-700">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <span className="text-2xl">👑</span>
+                                                        <span className="font-medium text-gray-900 dark:text-white">
+                                                            {suggestion.player.web_name}
+                                                        </span>
+                                                        <span className={`px-2 py-1 rounded text-xs font-bold ${suggestion.confidence === 'High' ? 'bg-green-500 text-white' :
+                                                            suggestion.confidence === 'Medium' ? 'bg-yellow-500 text-white' :
+                                                                'bg-gray-500 text-white'
+                                                            }`}>
+                                                            {suggestion.confidence}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-sm text-gray-600 dark:text-gray-400">
+                                                        {suggestion.reason}
+                                                    </p>
+                                                    {captain !== suggestion.player.id && (
+                                                        <button
+                                                            onClick={() => setCaptainPlayer(suggestion.player.id)}
+                                                            className="mt-2 px-3 py-1 bg-yellow-500 hover:bg-yellow-600 text-white rounded text-xs transition-colors"
+                                                        >
+                                                            Set as Captain
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Bench Optimization */}
+                                {teamAnalysis.benchSuggestions.length > 0 && (
+                                    <div>
+                                        <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                                            <Users className="w-5 h-5 text-purple-500" />
+                                            Lineup Optimization
+                                        </h4>
+                                        <div className="space-y-3">
+                                            {teamAnalysis.benchSuggestions.map((suggestion, index) => (
+                                                <div key={index} className="p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-700">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <span className="font-medium text-purple-900 dark:text-purple-100">
+                                                            {suggestion.action}: {suggestion.player.web_name}
+                                                        </span>
+                                                    </div>
+                                                    <p className="text-sm text-purple-700 dark:text-purple-300">
+                                                        {suggestion.reason}
+                                                    </p>
+                                                    {suggestion.instead && (
+                                                        <p className="text-xs text-purple-600 dark:text-purple-400 mt-1">
+                                                            Consider benching: {suggestion.instead.web_name}
+                                                        </p>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Team Health Check */}
+                                {teamAnalysis.metrics.unavailablePlayers > 0 && (
+                                    <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-700">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <AlertTriangle className="w-5 h-5 text-red-500" />
+                                            <span className="font-medium text-red-900 dark:text-red-100">
+                                                Team Health Alert
+                                            </span>
+                                        </div>
+                                        <p className="text-sm text-red-700 dark:text-red-300">
+                                            You have {teamAnalysis.metrics.unavailablePlayers} unavailable player(s) in your starting XI.
+                                            Consider immediate transfers to avoid getting 0 points.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
                     {/* Football Field */}
